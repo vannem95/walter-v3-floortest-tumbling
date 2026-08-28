@@ -1,0 +1,147 @@
+"""
+    Operational Space Controller Module
+"""
+module(
+    name = "walter-v2-floortest-z-control",
+)
+
+
+# Python Rules:
+bazel_dep(name = "rules_python", version = "1.4.1")
+
+
+bazel_dep(name = "com_github_mvukov_rules_ros2")
+git_override(
+    module_name = "com_github_mvukov_rules_ros2",
+    remote = "https://github.com/mvukov/rules_ros2.git",
+    commit = "b0a0544ccdb13db7fdb2b509ef58d04c5b7c72c9",
+)
+
+# Python Toolchain:
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+
+python.toolchain(
+    is_default = True,
+    configure_coverage_tool = True,
+    python_version = "3.12",      # rules_ros2 docs says I need to use Python 3.10 to match rules_ros2
+)
+
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+use_repo(pip, "rules_ros2_pip_deps")
+
+rules_ros2_non_module_deps = use_extension("@com_github_mvukov_rules_ros2//ros2:extensions.bzl", "non_module_deps")
+use_repo(
+    rules_ros2_non_module_deps,
+    "cyclonedds",
+    "foxglove_bridge",
+    "iceoryx",
+    "osrf_pycommon",
+    "ros2",
+    "ros2_ament_index",
+    "ros2_class_loader",
+    "ros2_common_interfaces",
+    "ros2_diagnostics",
+    "ros2_geometry2",
+    "ros2_image_common",
+    "ros2_kdl_parser",
+    "ros2_keyboard_handler",
+    "ros2_launch",
+    "ros2_launch_ros",
+    "ros2_libstatistics_collector",
+    "ros2_message_filters",
+    "ros2_pluginlib",
+    "ros2_rcl",
+    "ros2_rcl_interfaces",
+    "ros2_rcl_logging",
+    "ros2_rclcpp",
+    "ros2_rclpy",
+    "ros2_rcpputils",
+    "ros2_rcutils",
+    "ros2_resource_retriever",
+    "ros2_rmw",
+    "ros2_rmw_cyclonedds",
+    "ros2_rmw_dds_common",
+    "ros2_rmw_implementation",
+    "ros2_robot_state_publisher",
+    "ros2_rosbag2",
+    "ros2_rosidl",
+    "ros2_rosidl_python",
+    "ros2_rosidl_runtime_py",
+    "ros2_rosidl_typesupport",
+    "ros2_rpyutils",
+    "ros2_tracing",
+    "ros2_unique_identifier_msgs",
+    "ros2_urdfdom",
+    "ros2_urdfdom_headers",
+    "ros2_xacro",
+    "ros2cli",
+    "rules_ros2_config_clang",
+)
+
+
+# cc rules:
+bazel_dep(name = "rules_cc", version = "0.0.2")
+
+# Abseil Cpp:
+bazel_dep(name = "abseil-cpp", version = "20250127.0")
+
+# Eigen:
+bazel_dep(name = "eigen", version = "4.0.0-20241125.bcr.2")
+
+# OSQP Cpp Wrapper:
+bazel_dep(name = "osqp-cpp", version = "0.0.0-20231004-4343373.bcr.1")
+
+# OSQP: (explicit instead of transitive from osqp-cpp)
+bazel_dep(name = "osqp", version = "0.6.3.bcr.2")
+
+# MoJoCo:
+bazel_dep(name = "mujoco-bazel")
+archive_override(
+    module_name = "mujoco-bazel",
+    strip_prefix = "mujoco-bazel-main",
+    urls = ["https://github.com/jeh15/mujoco-bazel/archive/refs/heads/main.zip"],
+    integrity = "sha256-GWLqAiunkC0Pfx61ayaQoPrC62O02tnh2gqM9z2Wm/o=",
+)
+
+# Mujoco Models:
+bazel_dep(name = "mujoco-models")
+archive_override(
+    module_name = "mujoco-models",
+    strip_prefix = "mujoco-models-main",
+    urls = ["https://github.com/vannem95/mujoco-models/archive/refs/heads/main.zip"]
+)
+
+
+# GLFW: (Visualize MuJoCo simulations)
+bazel_dep(name = "glfw-bazel")
+archive_override(
+    module_name = "glfw-bazel",
+    strip_prefix = "glfw-bazel-main",
+    urls = ["https://github.com/jeh15/glfw-bazel/archive/refs/heads/main.zip"],
+    integrity = "sha256-Gk5anHk3IXzREPrUpyYPweB9J0fAdbMt5Hlu5VCYTO0=",
+)
+
+# Pybind11:
+bazel_dep(name = "pybind11_bazel", version = "2.13.6")
+
+# Skylib:
+bazel_dep(name = "bazel_skylib", version = "1.7.1")
+
+# Hedron's Compile Commands Extractor for Bazel
+# https://github.com/hedronvision/bazel-compile-commands-extractor
+bazel_dep(name = "hedron_compile_commands", dev_dependency = True)
+git_override(
+    module_name = "hedron_compile_commands",
+    remote = "https://github.com/mikael-s-persson/bazel-compile-commands-extractor",
+    commit = "f5fbd4cee671d8d908f37c83abaf70fba5928fc7"
+)
+
+
+pip.parse(
+    download_only = True,
+    hub_name = "pypi_operational-space-controller",
+    # We need to use the same version here as in the `python.toolchain` call.
+    python_version = "3.12",
+    requirements_lock = "//:requirements_lock.txt",
+)
+use_repo(pip, "pypi_operational-space-controller")

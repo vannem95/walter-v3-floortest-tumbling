@@ -1,0 +1,19 @@
+load("@com_github_mvukov_rules_ros2//ros2:cc_defs.bzl", "ros2_cpp_binary")
+ros2_cpp_binary(
+    name = "single_execution_node",
+    srcs = ["single_execution_node.cc"],
+    deps = [
+        # Dependency on your core node library
+        "//operational-space-control/walter_sr_v2:osc_node_lib",
+
+        # Core ROS 2 and C++ dependencies needed by the main function
+        "@ros2_rclcpp//:rclcpp",
+        "@rules_cc//cc/runfiles:runfiles",
+    ],
+    data = [
+        # The main executable needs access to the model files at runtime
+        # "@mujoco-models//models/walter_sr:scene_walter_sr.xml",
+        # "@mujoco-models//models/walter_sr:WaLTER_Senior.xml",
+        "@mujoco-models//:walter_sr"
+    ],
+)

@@ -1,0 +1,10 @@
+uint64 timestamp
+float32[8] motor_position
+float32[8] motor_velocity
+float32[8] motor_acceleration
+float32[8] torque_estimate
+float32[4] body_rotation
+float32[3] linear_body_velocity
+float32[3] angular_body_velocity
+float32[3] linear_body_acceleration
+bool[8] contact_mask

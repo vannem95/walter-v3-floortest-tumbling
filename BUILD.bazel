@@ -1,0 +1,87 @@
+load(
+    "@com_github_mvukov_rules_ros2//ros2:interfaces.bzl",
+    "cpp_ros2_interface_library",
+    "py_ros2_interface_library",  # Add this line    
+    "ros2_interface_library",
+)
+load("@com_github_mvukov_rules_ros2//ros2:topic.bzl", "ros2_topic")
+ros2_interface_library(
+    name = "osc_2_in_interface",
+    srcs = [
+        "OSCMujocoState.msg",
+        "OSCTorqueCommand.msg",
+        "OSCTaskspaceTargets.msg",
+        "Command.msg",
+        "MotorCommand.msg",
+        "WheelMotorCommand.msg",        
+    ],
+    deps = [
+        "@ros2_common_interfaces//:std_msgs",
+        "@ros2_rcl_interfaces//:builtin_interfaces",        
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cpp_ros2_interface_library(
+    name = "cpp_osc_2_in_interface",
+    deps = [":osc_2_in_interface"],
+    visibility = ["//visibility:public"],
+)
+# This new rule generates Python bindings for your messages
+py_ros2_interface_library(
+    name = "py_osc_2_in_interface",
+    deps = [":osc_2_in_interface"],
+    visibility = ["//visibility:public"],
+)
+
+# This new rule defines the runnable `ros2 topic` target
+ros2_topic(
+    name = "ros2_topic",
+    deps = [
+        "@ros2_common_interfaces//:py_std_msgs",
+        ":py_osc_2_in_interface",
+    ],
+)
+
+
+
+# --- New Interface Definition (Same srcs, new names) ---
+
+
+ros2_interface_library(
+    name = "walter_msgs",  # <--- NEW NAME
+    srcs = [
+        "OSCMujocoState.msg",
+        "OSCTorqueCommand.msg",
+        "OSCTaskspaceTargets.msg",
+        "Command.msg",
+        "MotorCommand.msg",
+        "WheelMotorCommand.msg",        
+    ],
+    # The message sources are exactly the same
+    deps = [
+        "@ros2_common_interfaces//:std_msgs",
+        "@ros2_rcl_interfaces//:builtin_interfaces",        
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cpp_ros2_interface_library(
+    name = "cpp_walter_msgs",  # <--- NEW NAME
+    deps = [":walter_msgs"],  # <--- Depend on the new base target
+    visibility = ["//visibility:public"],
+)
+
+py_ros2_interface_library(
+    name = "py_walter_msgs",  # <--- NEW NAME
+    deps = [":walter_msgs"],  # <--- Depend on the new base target
+    visibility = ["//visibility:public"],
+)
+
+ros2_topic(
+    name = "ros2_topic_renamed",
+    deps = [
+        "@ros2_common_interfaces//:py_std_msgs",
+        ":py_walter_msgs", # <--- Use the new Python interface target
+    ],
+)

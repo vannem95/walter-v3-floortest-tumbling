@@ -1,0 +1,73 @@
+load("@com_github_mvukov_rules_ros2//ros2:cc_defs.bzl", "ros2_cpp_library")
+
+cc_library(
+    name = "aliases",
+    srcs = ["aliases.h"],
+    deps = ["@eigen//:eigen"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "constants",
+    srcs = ["constants.h"],
+    deps = ["//operational-space-control/walter_sr_v2/autogen:autogen_defines_cc"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "containers",
+    srcs = ["containers.h"],
+    deps = [
+        ":aliases",
+        ":constants",
+        "//operational-space-control/walter_sr_v2/autogen:autogen_defines_cc",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+
+cc_library(
+    name = "utilities",
+    srcs = ["utilities.h"],
+    deps = [
+        "//operational-space-control/walter_sr_v2/autogen:autogen_functions_cc",
+        "@eigen//:eigen",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+
+ros2_cpp_library(
+    name = "osc_node_lib",
+    srcs = [
+        "osc_node.cc",
+    ],
+    hdrs = ["osc_node.h"],
+    deps = [
+        ":aliases",
+        ":constants",
+        ":containers",
+        ":utilities",
+        # External dependencies from your workspace
+        "@abseil-cpp//absl/log:absl_check",
+        "@abseil-cpp//absl/status:status",
+        "@eigen//:eigen",
+        "@mujoco-bazel//:mujoco",
+        "@osqp//:osqp",
+        "@osqp-cpp//:osqp++",
+        "@glfw-bazel//:glfw",
+
+        # Internal dependencies
+        "//operational-space-control:utilities",
+        
+        # Generated messages from your `ros2_msgs` rule
+        "//:cpp_osc_2_in_interface",
+        "//:cpp_walter_msgs",
+        
+
+        # ROS 2 Core Dependencies
+        "@ros2_common_interfaces//:cpp_std_msgs",
+        "@ros2_rclcpp//:rclcpp",
+    ],
+    visibility = ["//visibility:public"],
+)
