@@ -2,7 +2,7 @@
 #include <thread>  // Required for sleep
 #include "rclcpp/rclcpp.hpp"
 #include "rules_cc/cc/runfiles/runfiles.h"
-#include "operational-space-control/walter_sr_v2/osc_node.h"
+#include "operational-space-control/walter_sr_v3/osc_node.h"
 #include "rclcpp/executors/multi_threaded_executor.hpp"
 
 // Global pointer allows the static signal handler to access the executor
@@ -29,7 +29,7 @@ int main(int argc, char** argv) {
 
     std::string error;
     std::unique_ptr<rules_cc::cc::runfiles::Runfiles> runfiles(
-        rules_cc::cc::runfiles::Runfiles::Create(argv[0], "walter-v2-floortest-z-control", &error));
+        rules_cc::cc::runfiles::Runfiles::Create(argv[0], "walter-v3-floortest-z-control", &error));
 
     if (!error.empty()) {
         std::cerr << "Failed to create runfiles: " << error << std::endl;
@@ -37,7 +37,7 @@ int main(int argc, char** argv) {
     }
 
     std::filesystem::path model_path = 
-        runfiles->Rlocation("mujoco-models~/models/walter_sr/scene_walter_sr_v2.xml");
+        runfiles->Rlocation("mujoco-models~/models/walter_sr/scene_walter_sr_v3_damped.xml");
 
     // 3. Instantiate Executor and set global pointer
     rclcpp::executors::MultiThreadedExecutor executor;

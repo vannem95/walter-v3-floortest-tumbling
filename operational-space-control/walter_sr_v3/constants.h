@@ -2,7 +2,7 @@
 
 #include "Eigen/Dense"
 
-#include "operational-space-control/walter_sr_v2/autogen/autogen_defines.h"
+#include "operational-space-control/walter_sr_v3/autogen/autogen_defines.h"
 
 using namespace operational_space_controller::constants;
 

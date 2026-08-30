@@ -2,7 +2,7 @@
     Operational Space Controller Module
 """
 module(
-    name = "walter-v2-floortest-z-control",
+    name = "walter-v3-floortest-z-control",
 )
 
 

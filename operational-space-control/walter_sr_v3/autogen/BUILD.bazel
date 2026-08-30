@@ -6,7 +6,7 @@ py_binary(
     srcs = ["autogen.py"],
     data = [
         "@mujoco-models//:walter_sr",
-        "//config/walter_sr_v2:walter_sr_config",
+        "//config/walter_sr_v3:walter_sr_config",
     ],
     deps = [
         "@rules_python//python/runfiles",
@@ -21,7 +21,7 @@ genrule(
     name = "autogen_rule",
     srcs = [
         "@mujoco-models//:walter_sr",
-        "//config/walter_sr_v2:walter_sr_config",
+        "//config/walter_sr_v3:walter_sr_config",
     ],
     tools = [":autogen"],
     outs = ["autogen_functions.cc", "autogen_functions.h", "autogen_defines.h"],

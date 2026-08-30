@@ -4,7 +4,7 @@ ros2_cpp_binary(
     srcs = ["single_execution_node.cc"],
     deps = [
         # Dependency on your core node library
-        "//operational-space-control/walter_sr_v2:osc_node_lib",
+        "//operational-space-control/walter_sr_v3:osc_node_lib",
 
         # Core ROS 2 and C++ dependencies needed by the main function
         "@ros2_rclcpp//:rclcpp",

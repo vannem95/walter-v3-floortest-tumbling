@@ -10,7 +10,7 @@ cc_library(
 cc_library(
     name = "constants",
     srcs = ["constants.h"],
-    deps = ["//operational-space-control/walter_sr_v2/autogen:autogen_defines_cc"],
+    deps = ["//operational-space-control/walter_sr_v3/autogen:autogen_defines_cc"],
     visibility = ["//visibility:public"],
 )
 
@@ -20,7 +20,7 @@ cc_library(
     deps = [
         ":aliases",
         ":constants",
-        "//operational-space-control/walter_sr_v2/autogen:autogen_defines_cc",
+        "//operational-space-control/walter_sr_v3/autogen:autogen_defines_cc",
     ],
     visibility = ["//visibility:public"],
 )
@@ -30,7 +30,7 @@ cc_library(
     name = "utilities",
     srcs = ["utilities.h"],
     deps = [
-        "//operational-space-control/walter_sr_v2/autogen:autogen_functions_cc",
+        "//operational-space-control/walter_sr_v3/autogen:autogen_functions_cc",
         "@eigen//:eigen",
     ],
     visibility = ["//visibility:public"],

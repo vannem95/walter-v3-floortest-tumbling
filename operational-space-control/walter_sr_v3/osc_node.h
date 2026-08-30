@@ -22,8 +22,8 @@
 
 // We keep containers/aliases if State struct is defined there, 
 // otherwise we can just define a simple local struct.
-#include "operational-space-control/walter_sr_v2/aliases.h"
-#include "operational-space-control/walter_sr_v2/containers.h"
+#include "operational-space-control/walter_sr_v3/aliases.h"
+#include "operational-space-control/walter_sr_v3/containers.h"
 
 using namespace operational_space_controller::containers;
 using namespace operational_space_controller::aliases;

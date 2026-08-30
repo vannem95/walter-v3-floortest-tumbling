@@ -22,7 +22,7 @@ class AutoGen():
 
         # Parse Configuration YAML File:
         r = Runfiles.Create()
-        with open(r.Rlocation("walter-v2-floortest-z-control/config/walter_sr_v2/walter_sr_config.yaml"), "r") as file:
+        with open(r.Rlocation("walter-v3-floortest-z-control/config/walter_sr_v3/walter_sr_config.yaml"), "r") as file:
             config = yaml.safe_load(file)
 
         # Get Weight Configuration:
@@ -46,9 +46,15 @@ class AutoGen():
         self.z_size = self.num_contact_site_ids * 3
         self.design_vector_size = self.dv_size + self.u_size + self.z_size
 
-        self.dv_idx = self.dv_size
-        self.u_idx = self.dv_idx + self.u_size
-        self.z_idx = self.u_idx + self.z_size
+        # self.dv_idx = self.dv_size
+        # self.u_idx = self.dv_idx + self.u_size
+        # self.z_idx = self.u_idx + self.z_size
+
+        self.dv_idx = 0
+        self.u_idx = self.dv_size
+        self.z_idx = self.dv_size + self.u_size
+
+
 
         # To replace 6 from B matrix - the pos/rot xyz of the first non contact site
         body_dim = self.dv_size - self.u_size
@@ -83,9 +89,15 @@ class AutoGen():
             M @ dv + C - B @ u - J_contact.T @ z = 0
         """
         # Unpack Design Variables:
-        dv = q[:self.dv_idx]
-        u = q[self.dv_idx:self.u_idx]
-        z = q[self.u_idx:self.z_idx]
+        # dv = q[:self.dv_idx]
+        # u = q[self.dv_idx:self.u_idx]
+        # z = q[self.u_idx:self.z_idx]
+
+        dv = q[self.dv_idx : self.dv_idx + self.dv_size]
+        u = q[self.u_idx : self.u_idx + self.u_size]
+        z = q[self.z_idx : self.z_idx + self.z_size]
+
+
 
         # Dynamics:
         equality_constraints = M @ dv + C - self.B @ u - J_contact @ z
@@ -116,9 +128,17 @@ class AutoGen():
 
         """
         # Unpack Design Variables:
-        dv = q[:self.dv_idx]
-        u = q[self.dv_idx:self.u_idx]
-        z = q[self.u_idx:self.z_idx]
+        # dv = q[:self.dv_idx]
+        # u = q[self.dv_idx:self.u_idx]
+        # z = q[self.u_idx:self.z_idx]
+
+        dv = q[self.dv_idx : self.dv_idx + self.dv_size]
+        u = q[self.u_idx : self.u_idx + self.u_size]
+        z = q[self.z_idx : self.z_idx + self.z_size]
+
+
+
+
 
         def translational_friction(x: MX) -> MX:
             constraint_1 = x[0] + x[1] - self.mu * x[2]
@@ -168,9 +188,17 @@ class AutoGen():
 
         """
         # Unpack Design Variables:
-        dv = q[:self.dv_idx]
-        u = q[self.dv_idx:self.u_idx]
-        z = q[self.u_idx:self.z_idx]
+        
+        # dv = q[:self.dv_idx]
+        # u = q[self.dv_idx:self.u_idx]
+        # z = q[self.u_idx:self.z_idx]
+
+        dv = q[self.dv_idx : self.dv_idx + self.dv_size]
+        u = q[self.u_idx : self.u_idx + self.u_size]
+        z = q[self.z_idx : self.z_idx + self.z_size]
+
+
+
 
         # Compute Task Space Tracking Objective:
         ddx_task = J_task @ dv + task_bias
@@ -542,7 +570,7 @@ def main(argv):
     r = Runfiles.Create()
     mj_model = mujoco.MjModel.from_xml_path(
         r.Rlocation(
-            path="mujoco-models/models/walter_sr/WaLTER_Senior_v2.xml",
+            path="mujoco-models/models/walter_sr/WaLTER_Senior_v3_damped.xml",
         )
     )
 
