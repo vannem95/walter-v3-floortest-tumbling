@@ -906,113 +906,72 @@ void OSCNode::timer_callback() {
 
 
 
-
-// ===============================================================================================================
 void OSCNode::update_mj_data(const State& current_state) {
-    // =========================================================================
-    // PART 1: PREPARE POSITION (QPOS)
-    // =========================================================================
-    
-    // 1. Map Body Orientation (IMU) -> qpos[3-6]
-    // MuJoCo Quaternion order: [w, x, y, z] - imu uses x y z w
+    // -------------------------------------------------------------
+    // 1. DIRECT KINEMATICS (Orientation & Joints)
+    // -------------------------------------------------------------
     mj_data_->qpos[3] = current_state.body_rotation(0); // w
     mj_data_->qpos[4] = current_state.body_rotation(1); // x
     mj_data_->qpos[5] = current_state.body_rotation(2); // y
     mj_data_->qpos[6] = current_state.body_rotation(3); // z
 
-    // Safety: Handle zero quaternion
     if (current_state.body_rotation.norm() < 1e-6) {
-        mj_data_->qpos[3] = 1.0; 
+        mj_data_->qpos[3] = 1.0;
     }
 
-    // 2. Map Motor Positions -> qpos[7...]
-    // Note: Adjust indices if your robot has fewer/more joints
     for (int i = 0; i < model::nu_size; ++i) {
         mj_data_->qpos[7 + i] = current_state.motor_position(i);
+        mj_data_->qvel[6 + i] = current_state.motor_velocity(i);
     }
 
-    // 3. Reset Body Position to (0,0,0) for "Probing"
+    // -------------------------------------------------------------
+    // 2. TRANSLATION (Invariant XY + Filtered Smooth Z)
+    // -------------------------------------------------------------
+    // Keep X and Y centered at 0. Dynamics and torques are invariant to XY translation.
     mj_data_->qpos[0] = 0.0;
     mj_data_->qpos[1] = 0.0;
-    mj_data_->qpos[2] = 0.0;
 
-    // =========================================================================
-    // PART 2: ANCHORING LOGIC (Find Body Position)
-    // =========================================================================
-    
-    // Run Kinematics on the "Probed" state
+    // Probe FK to get instantaneous foot heights relative to base
     mj_fwdPosition(mj_model_, mj_data_);
 
-    double sum_active_x = 0.0;
-    double sum_active_y = 0.0;
-    double lowest_foot_z = 100.0;
-    int active_feet_count = 0;
-
-    // A. Find absolute floor height
-    for (int id : contact_site_ids_) { 
+    double lowest_contact_z = 100.0;
+    for (int id : contact_site_ids_) {
         double z = mj_data_->site_xpos[3 * id + 2];
-        if (z < lowest_foot_z) lowest_foot_z = z;
-    }
-
-    // B. Average the active feet
-    const double CONTACT_THRESHOLD = 0.01;
-    for (int id : contact_site_ids_) { 
-        double x = mj_data_->site_xpos[3 * id + 0];
-        double y = mj_data_->site_xpos[3 * id + 1];
-        double z = mj_data_->site_xpos[3 * id + 2];
-
-        // If foot is near the floor, use it for support center
-        if (std::abs(z - lowest_foot_z) <= CONTACT_THRESHOLD) {
-            sum_active_x += x;
-            sum_active_y += y;
-            active_feet_count++;
+        if (z < lowest_contact_z) {
+            lowest_contact_z = z;
         }
     }
 
-    // C. Invert the vector (If feet are at X, Body must be at -X)
-    double real_body_x = 0.0;
-    double real_body_y = 0.0;
+    // Kinematic ground-referenced height
+    double raw_base_z = -lowest_contact_z;
+
+    // Low-pass / Complementary filter on Z to prevent discontinuous jumps on contact changes
+    static double filtered_base_z = 0.20;
+    const double alpha_z = 0.05; // 5% correction per tick at 200 Hz (smooth ~0.1s time constant)
+    filtered_base_z = (1.0 - alpha_z) * filtered_base_z + alpha_z * raw_base_z;
     
-    if (active_feet_count > 0) {
-        real_body_x = -(sum_active_x / active_feet_count);
-        real_body_y = -(sum_active_y / active_feet_count);
-    }
+    mj_data_->qpos[2] = std::clamp(filtered_base_z, 0.10, 0.50);
 
-    double real_body_z = std::clamp(-lowest_foot_z, 0.10, 0.80); 
-
-    // D. Apply calculated Body Position
-    mj_data_->qpos[0] = real_body_x;
-    mj_data_->qpos[1] = real_body_y;
-    mj_data_->qpos[2] = real_body_z;
-
-    // =========================================================================
-    // PART 3: PREPARE VELOCITY (QVEL) - CRITICAL!
-    // =========================================================================
-    
-    // 1. Linear Body Velocity (From estimator, or 0 if unknown)
-    mj_data_->qvel[0] = current_state.linear_body_velocity(0);
-    mj_data_->qvel[1] = current_state.linear_body_velocity(1);
-    mj_data_->qvel[2] = current_state.linear_body_velocity(2);
-
-    // 2. Angular Body Velocity (From IMU Gyro)
+    // -------------------------------------------------------------
+    // 3. VELOCITIES (Fused IMU + Kinematics)
+    // -------------------------------------------------------------
+    // Angular rates directly from IMU Gyro
     mj_data_->qvel[3] = current_state.angular_body_velocity(0);
     mj_data_->qvel[4] = current_state.angular_body_velocity(1);
     mj_data_->qvel[5] = current_state.angular_body_velocity(2);
 
-    // 3. Motor Velocities
-    for (int i = 0; i < model::nu_size; ++i) {
-        mj_data_->qvel[6 + i] = current_state.motor_velocity(i);
-    }
+    // Linear velocity from EKF / estimator (or fused contact kinematics)
+    mj_data_->qvel[0] = current_state.linear_body_velocity(0);
+    mj_data_->qvel[1] = current_state.linear_body_velocity(1);
+    mj_data_->qvel[2] = current_state.linear_body_velocity(2);
 
-    // =========================================================================
-    // PART 4: FINAL COMPUTATION
-    // =========================================================================
-    
-    // Update Jacobians (mj_jac) and Mass Matrix (qM) with the FULL correct state
+    // -------------------------------------------------------------
+    // 4. FULL EVALUATION FOR CASADI MATRICES
+    // -------------------------------------------------------------
     mj_fwdPosition(mj_model_, mj_data_);
-    mj_fwdVelocity(mj_model_, mj_data_); 
-    
-    // Update site positions for your controller's use
+    mj_fwdVelocity(mj_model_, mj_data_);
+
+    // Map site positions for operational space tasks
     points_ = Eigen::Map<Matrix<model::site_ids_size, 3>>(
         mj_data_->site_xpos)(site_ids_, Eigen::placeholders::all);
 }
