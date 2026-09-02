@@ -159,7 +159,7 @@ OSCNode::OSCNode(const std::string& xml_path)
     mj_data_ = mj_makeData(mj_model_);
 
     // check if keyframe is correct======================================================================
-    mj_resetDataKeyframe(mj_model_, mj_data_, 6); // 
+    mj_resetDataKeyframe(mj_model_, mj_data_, 11); // 
     mj_forward(mj_model_, mj_data_); // Compute initial kinematics
     
     
@@ -372,54 +372,43 @@ void OSCNode::state_callback(const OSCMujocoState::SharedPtr msg) {
 
 // ===============================================================================================================
 void OSCNode::timer_callback() {
-    // --- 1. DECLARE LOCAL COPIES ---
+
+    // Initial variables
     State local_state; 
     bool local_safety_override_active;
     std::chrono::time_point<std::chrono::high_resolution_clock> local_state_read_time;
-    
     double current_time = this->now().seconds();
-
-    // --- DIAGNOSTIC START: Capture the exact start time ---
     auto t_start_execution = std::chrono::high_resolution_clock::now(); 
-    // --- DIAGNOSTIC END ---
-
-    { // --- CRITICAL SECTION START (Locked, FAST) ---
+    { 
         std::lock_guard<std::mutex> lock_state(state_mutex_);
-        
-        // Copy the shared state members needed for the control loop
         local_state = state_; 
         local_safety_override_active = safety_override_active_;
         local_state_read_time = state_read_time_;
-        
-        // Check for state gating before proceeding
         if (!is_state_received_) {
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "Waiting for initial state message...");
             return; 
         }
-
-    } // --- CRITICAL SECTION END (Lock released!) ---
-
+    }
     time_wait_for_execution_ms_ = std::chrono::duration<double, std::milli>(t_start_execution - local_state_read_time).count();    
-
     double dt = current_time - last_time_;
-    if (dt == 0.0) dt = 0.0001; 
-
-    // --- STATIC PERSISTENT VARIABLES ---
-    // Declared OUTSIDE tick 0 so they survive forever and the whole function can see them!
+    if (dt == 0.0) dt = 0.0001;
+    
+    // initial hip height
     static double hip_z_tl_initial = 0.14;
     static double hip_z_tr_initial = 0.14;
     static double hip_z_hl_initial = 0.14;
     static double hip_z_hr_initial = 0.14;
 
+    // initial shin position
     static double shin_pos_tl_initial = 0.0;
     static double shin_pos_tr_initial = 0.0;
     static double shin_pos_hl_initial = 0.0;
     static double shin_pos_hr_initial = 0.0;    
 
+    // initial contact switch info
     static double gait_start_time = 0.0;
     static Eigen::Vector<double, model::contact_site_ids_size> contact_start_times = Eigen::Vector<double, model::contact_site_ids_size>::Constant(-100.0);
     static Eigen::Vector<double, model::contact_site_ids_size> prev_contact_mask = Eigen::Vector<double, model::contact_site_ids_size>::Zero();
-    
     const double soft_switch_max_force = 770.0; 
     const double soft_switch_ramp_time = 0.5;    
     
@@ -427,46 +416,41 @@ void OSCNode::timer_callback() {
     Eigen::Quaterniond q_body(local_state.body_rotation(0), local_state.body_rotation(1), 
                             local_state.body_rotation(2), local_state.body_rotation(3));
 
-    // link lengths
     const double L_THIGH = 0.1016;  // hip to knee
     const double L_SHIN  = 0.08255; // knee to wheel center
     const double R_WHEEL = 0.0635;  // Radius of the wheel
-
-    // Assign the values to the static variables (removed the 'double' keyword)
     double hip_z_tl = get_propeller_leg_height(q_body, local_state.motor_position(0), local_state.motor_position(1), 0, 0, L_THIGH, L_SHIN, R_WHEEL);
     double hip_z_tr = get_propeller_leg_height(q_body, local_state.motor_position(2), local_state.motor_position(3), 0, 0, L_THIGH, L_SHIN, R_WHEEL);
     double hip_z_hl = get_propeller_leg_height(q_body, local_state.motor_position(4), local_state.motor_position(5), 0, 0, L_THIGH, L_SHIN, R_WHEEL);
     double hip_z_hr = get_propeller_leg_height(q_body, local_state.motor_position(6), local_state.motor_position(7), 0, 0, L_THIGH, L_SHIN, R_WHEEL);
 
 
-    // Check for first call or zero time step
+    // Zero time step
     if (last_time_ == 0.0) {
         update_mj_data(local_state); // Pass local state
 
+        // Set initial variables
         hip_z_tl_initial = hip_z_tl;
         hip_z_tr_initial = hip_z_tr;
         hip_z_hl_initial = hip_z_hl;
         hip_z_hr_initial = hip_z_hr;
-
-        // Set the gait start time immediately at t=0
         gait_start_time = current_time;
-
         shin_pos_tl_initial  =  local_state.motor_position(1);
         shin_pos_tr_initial  =  local_state.motor_position(3);
         shin_pos_hl_initial  =  local_state.motor_position(5);
         shin_pos_hr_initial  =  local_state.motor_position(7);
 
         
-        // To build the OSQP matrix template, we must provide physical data.
+        // Build the OSQP matrix
         update_osc_data();
-        
-        // Inside if (last_time_ == 0.0) { ... }
+
+        // Initial contact force limits
         Eigen::Vector<double, model::contact_site_ids_size> initial_force_limits;
         for (int i=0; i < model::contact_site_ids_size; ++i) {
             // If starting on the ground, give it the full 770N limit instantly
             initial_force_limits(i) = local_state.contact_mask(i) > 0.5 ? soft_switch_max_force : 0.0;
         }
-        prev_contact_mask = local_state.contact_mask; // <-- CRITICAL: Prevents the 0.0 N ramp on tick 1
+        prev_contact_mask = local_state.contact_mask;
 
         update_optimization_data(initial_force_limits);
         absl::Status result = set_up_optimization(initial_force_limits);
@@ -484,18 +468,11 @@ void OSCNode::timer_callback() {
     }
 
     
-
-
-    // --- 2. Mandatory Joint Limit Check (Outer Loop - UNLOCKED) ---
-    // (Keep the limit checks here so it can trip the safety flag!)
-    bool limit_hit = local_safety_override_active; 
-    
+    // Hip height and hip angle safety checks
+    bool limit_hit = local_safety_override_active;     
     if (!local_safety_override_active) {
-        
-        const double HIP_MIN_RAD = 0.6;
-        const double HIP_MAX_RAD = 1.8;
+        const double THIGH_LIMIT = 1.95;
         const double MIN_HIP_HEIGHT = 0.11; // 0.13 meters
-        
         // 1. Check Hip Heights
         if (hip_z_tl < MIN_HIP_HEIGHT || hip_z_tr < MIN_HIP_HEIGHT || 
             hip_z_hl < MIN_HIP_HEIGHT || hip_z_hr < MIN_HIP_HEIGHT) {
@@ -505,12 +482,11 @@ void OSCNode::timer_callback() {
         
         // 2. Check Hip (Thigh) Joints (0, 2, 4, 6) using local_state.motor_position
         if (!limit_hit) {
+            // Check Thighs (0, 2, 4, 6) using local_state.motor_position
             for (size_t i : {0, 2, 4, 6}) {
-                double pos = local_state.motor_position(i);
-                double abs_pos = std::abs(pos); // Assuming left/right mirroring
-                if (abs_pos < HIP_MIN_RAD || abs_pos > HIP_MAX_RAD) {
+                if (std::abs(local_state.motor_position(i)) >= THIGH_LIMIT) {
                     limit_hit = true;
-                    RCLCPP_WARN_ONCE(this->get_logger(), "Hip limit (%.2f-%.2f rad) hit on motor index %zu (val: %.2f). Overriding control.", HIP_MIN_RAD, HIP_MAX_RAD, i, pos);
+                    RCLCPP_WARN_ONCE(this->get_logger(), "Absolute THIGH limit (%.2f rad) hit on motor index %zu. Overriding control.", THIGH_LIMIT, i);
                     break; 
                 }
             }
@@ -525,63 +501,63 @@ void OSCNode::timer_callback() {
     }
 
 
-    // --- 3. Conditional OSC Calculation and Solve (UNLOCKED) ---
     if (!local_safety_override_active) {
 
+
         // ===============================================================
-        // --- PHASE-BASED CONTACT MASK OVERRIDE ---
+        // --- HARDCODED TIME-BASED CONTACT MASK AND TUMBLE TARGETS ---
         // ===============================================================
-        // (Assuming you use the phase-based version we discussed earlier!)
         double elapsed_t = current_time - gait_start_time;
-        double MAX_SHIN_VEL = 0.01; // Your desired cruising speed
-        double RAMP_TIME = 2.0;    // Seconds to reach top speed
         
-        double shin_vel_target = 0.0;
-        double pos_offset = 0.0;
+        // 1. Constant Tumbling Velocity (Matches Sim: 1.5 rad/s)
+        double shin_rot_vel = 1.5; 
+        double shin_vel_target = shin_rot_vel;
 
-        if (elapsed_t < RAMP_TIME) {
-            shin_vel_target = MAX_SHIN_VEL * (elapsed_t / RAMP_TIME);
-            pos_offset = 0.5 * (MAX_SHIN_VEL / RAMP_TIME) * (elapsed_t * elapsed_t);
-        } else {
-            shin_vel_target = MAX_SHIN_VEL;
-            double distance_during_ramp = 0.5 * MAX_SHIN_VEL * RAMP_TIME;
-            pos_offset = distance_during_ramp + MAX_SHIN_VEL * (elapsed_t - RAMP_TIME);
+        // 2. Open-Loop Position Targets
+        double shin_pos_tl_target = shin_pos_tl_initial + shin_rot_vel * elapsed_t;
+        double shin_pos_tr_target = shin_pos_tr_initial + shin_rot_vel * elapsed_t;
+        double shin_pos_hl_target = shin_pos_hl_initial + shin_rot_vel * elapsed_t;
+        double shin_pos_hr_target = shin_pos_hr_initial + shin_rot_vel * elapsed_t;
+
+        // 3. Timing Parameters (Calibrated from Simulation)
+        const double x_front_period = 1.42; 
+        const double y_back_period  = 1.42;
+        const double z_front_start  = 1.30;
+        const double w_back_start   = 0.638;
+        
+        const bool initial_front_F = true;
+        const bool initial_back_F  = true;
+
+        // 4. Calculate Front/Head Flips
+        bool front_F = initial_front_F;
+        if (elapsed_t >= z_front_start) {
+            int flips = static_cast<int>((elapsed_t - z_front_start) / x_front_period) + 1;
+            if (flips % 2 != 0) front_F = !initial_front_F;
         }
 
-        double shin_pos_tl_target = shin_pos_tl_initial + pos_offset;
-        double shin_pos_tr_target = shin_pos_tr_initial + pos_offset;
-        double shin_pos_hl_target = shin_pos_hl_initial + pos_offset;
-        double shin_pos_hr_target = shin_pos_hr_initial + pos_offset;
-
-        // Calculate phase
-        double current_phase_angle = shin_pos_tl_target - shin_pos_tl_initial;
-        int completed_half_rotations = static_cast<int>(current_phase_angle / M_PI);
-        bool is_even_cycle = (completed_half_rotations % 2 == 0);
-
-        if (is_even_cycle) {
-            local_state.contact_mask(0) = 1.0; local_state.contact_mask(2) = 1.0; 
-            local_state.contact_mask(1) = 0.0; local_state.contact_mask(3) = 0.0; 
-            local_state.contact_mask(4) = 1.0; local_state.contact_mask(6) = 1.0; 
-            local_state.contact_mask(5) = 0.0; local_state.contact_mask(7) = 0.0; 
-        } else {
-            local_state.contact_mask(0) = 0.0; local_state.contact_mask(2) = 0.0;
-            local_state.contact_mask(1) = 1.0; local_state.contact_mask(3) = 1.0;
-            local_state.contact_mask(4) = 0.0; local_state.contact_mask(6) = 0.0;
-            local_state.contact_mask(5) = 1.0; local_state.contact_mask(7) = 1.0;
+        // 5. Calculate Back/Torso Flips
+        bool back_F = initial_back_F;
+        if (elapsed_t >= w_back_start) {
+            int flips = static_cast<int>((elapsed_t - w_back_start) / y_back_period) + 1;
+            if (flips % 2 != 0) back_F = !initial_back_F;
         }
 
-        // ===============================================================
-        // --- STATIC STANDING CONTACT MASK OVERRIDE ---
-        // ===============================================================
-        // Since we are doing a height task (MAX_SHIN_VEL = 0.0), 
-        // force all 8 contact points to be firmly on the ground.
-        // for(int i = 0; i < 8; ++i) {
-        //     local_state.contact_mask(i) = 1.0; 
-        // }        
+        // 6. Apply to Contact Mask
+        // Back/Torso: indices 0 (F), 1 (R), 2 (F), 3 (R)
+        local_state.contact_mask(0) = back_F ? 1.0 : 0.0;
+        local_state.contact_mask(1) = back_F ? 0.0 : 1.0;
+        local_state.contact_mask(2) = back_F ? 1.0 : 0.0;
+        local_state.contact_mask(3) = back_F ? 0.0 : 1.0;
 
-        // ===============================================================
-        // --- CALCULATE SOFT SWITCH FORCE LIMITS ---
-        // ===============================================================
+        // Front/Head: indices 4 (F), 5 (R), 6 (F), 7 (R)
+        local_state.contact_mask(4) = front_F ? 1.0 : 0.0;
+        local_state.contact_mask(5) = front_F ? 0.0 : 1.0;
+        local_state.contact_mask(6) = front_F ? 1.0 : 0.0;
+        local_state.contact_mask(7) = front_F ? 0.0 : 1.0;
+
+
+
+        // Calculate contact force limit
         Eigen::Vector<double, model::contact_site_ids_size> current_force_limits;
         for(int i=0; i < model::contact_site_ids_size; ++i) {
             bool is_contact = (local_state.contact_mask(i) > 0.5);
@@ -600,24 +576,7 @@ void OSCNode::timer_callback() {
         prev_contact_mask = local_state.contact_mask;
 
 
-        // ===============================================================
-        // --- STATIC FORCE LIMITS OVERRIDE ---
-        // ===============================================================
-        // For a static standing test, we bypass the soft-switch ramp 
-        // so the solver instantly has the force required to fight gravity.
-        // Eigen::Vector<double, model::contact_site_ids_size> current_force_limits;
-        // for(int i=0; i < model::contact_site_ids_size; ++i) {
-        //     if (local_state.contact_mask(i) > 0.5) {
-        //         current_force_limits[i] = soft_switch_max_force; // Instantly give 770N limit
-        //     } else {
-        //         current_force_limits[i] = 0.0;
-        //     }
-        // }
-        // prev_contact_mask = local_state.contact_mask; // Keep this updated just in case        
-
-
-        // 1. Update Mujoco Data for Kinematics (using modified local_state)
-        // --- TIMING POINT A: START MUJOCO/KINEMATICS ---
+        // 1. Update Mujoco Data for Kinematics 
         auto t_start_kinematics = std::chrono::high_resolution_clock::now();        
         update_mj_data(local_state); 
         
@@ -650,8 +609,6 @@ void OSCNode::timer_callback() {
             local_state.motor_velocity(6), local_state.motor_velocity(7),
             0, 0, L_THIGH, L_SHIN);
 
-        // double target_hip_z = hip_z_tl_initial;        
-        // double target_hip_z_vel = 0.0;
 
         // ===============================================================
         // HIP HEIGHT TARGET
@@ -665,15 +622,6 @@ void OSCNode::timer_callback() {
         // ===============================================================
         // SHIN VELOCITY AND POSITION TARGET
         // ===============================================================        
-        // double elapsed_t = current_time - gait_start_time;
-        
-        // double shin_vel_target = MAX_SHIN_VEL;
-
-        // double shin_pos_tl_target = shin_pos_tl_initial + shin_vel_target*elapsed_t;
-        // double shin_pos_tr_target = shin_pos_tr_initial + shin_vel_target*elapsed_t;
-        // double shin_pos_hl_target = shin_pos_hl_initial + shin_vel_target*elapsed_t;
-        // double shin_pos_hr_target = shin_pos_hr_initial + shin_vel_target*elapsed_t;
-
         double shin_pos_tl  =  local_state.motor_position(1);
         double shin_pos_tr  =  local_state.motor_position(3);
         double shin_pos_hl  =  local_state.motor_position(5);
@@ -710,21 +658,9 @@ void OSCNode::timer_callback() {
         taskspace_targets_.row(7)(2) = hl_hip_z_ddq_cmd; taskspace_targets_.row(8)(2) = hr_hip_z_ddq_cmd;
 
 
-        // last_hip_z_hl = hip_z_hl; last_hip_z_hr = hip_z_hr; last_hip_z_tl = hip_z_tl; last_hip_z_tr = hip_z_tr;        
 
-        // ==============================================================================
-        // --- NEW: PUBLISH N x 6 MATRIX FOR ROSBAG RECORDING ---
-        // ==============================================================================
-        // 1. Clear the numbers from the LAST loop (does not clear the layout/label)
         data_msg_.data.clear();
-        
-        // 2. Dump the new numbers
-        // for (int i = 0; i < model::site_ids_size; ++i) {
-        //     for (int j = 0; j < 6; ++j) {
-        //         data_msg_.data.push_back(taskspace_targets_(i, j));
-        //     }
-        // }
-        
+
         data_msg_.data.push_back(target_hip_z);
 
         data_msg_.data.push_back(hip_z_tl);
@@ -808,65 +744,6 @@ void OSCNode::timer_callback() {
         auto t_start_solve = std::chrono::high_resolution_clock::now();
 
 
-        
-        // --- DEBUGGING BLOCK: PRINT SOLVER STATE ---
-        // Print only once per second to avoid flooding console
-        // static auto last_print_time = std::chrono::steady_clock::now();
-        // auto now = std::chrono::steady_clock::now();
-        // if (std::chrono::duration_cast<std::chrono::seconds>(now - last_print_time).count() >= 1) {
-            // last_print_time = now;
-
-        // std::stringstream ss;
-        // ss << "\n--- OSC STATE DEBUG ---\n";
-        
-        // // 1. Check if solver thinks feet are touching ground
-        // ss << "Contact Mask: [ ";
-        // for(int i=0; i<model::contact_site_ids_size; ++i) ss << local_state.contact_mask(i) << " ";
-        // ss << "]\n";
-
-        // // 2. Check estimated robot mass (from qM)
-        // // Trace of upper-left 3x3 of Mass Matrix roughly correlates to mass
-        // double approx_mass = osc_data_.mass_matrix(0,0); 
-        // ss << "Mass Matrix (0,0): " << approx_mass << " (Should be ~total robot mass)\n";
-
-        // // 3. Check qpos (Altitude)
-        // ss << "Torso x (qpos[0]): " << mj_data_->qpos[0] << "\n";
-        // ss << "Torso y (qpos[1]): " << mj_data_->qpos[1] << "\n";
-        // ss << "Torso Height (qpos[2]): " << mj_data_->qpos[2] << "\n";
-
-        // // 4. Check Orientation
-        // ss << "Torso Quat (w,x,y,z): " << mj_data_->qpos[3] << ", " << mj_data_->qpos[4] 
-        // << ", " << mj_data_->qpos[5] << ", " << mj_data_->qpos[6] << "\n";
-
-        // // 3. Joint Angles (Motors)
-        // // These start at index 7 for a Floating Base robot
-        // ss << "Motor Angles (Rad):  [ ";
-        // for (int i = 0; i < model::nu_size; ++i) {
-        //     ss << mj_data_->qpos[7 + i] << " ";
-        // }
-        // ss << "]\n";
-
-        // // 4. Joint Velocities (qvel) - Optional but useful
-        // // Note: qvel is different. [0-2] Linear, [3-5] Angular, [6+] Joints
-        // ss << "Motor Velocities:    [ ";
-        // for (int i = 0; i < model::nu_size; ++i) {
-        //     ss << mj_data_->qvel[6 + i] << " ";
-        // }
-        // ss << "]\n";      
-
-        // // 5. Check Gravity Vector (qfrc_bias)
-        // // The first 3 elements of qfrc_bias should be approx [0, 0, mass*9.81]
-        // ss << "Gravity/Bias Force (0-2): " 
-        // << osc_data_.coriolis_matrix(0) << ", " 
-        // << osc_data_.coriolis_matrix(1) << ", " 
-        // << osc_data_.coriolis_matrix(2) << "\n";
-
-        // RCLCPP_INFO(this->get_logger(), "%s", ss.str().c_str());
-        // }
-        // -------------------------------------------
-        
-
-
         // OLD: solve_optimization();
         // NEW: Check result
         bool solver_success = solve_optimization();
@@ -943,7 +820,7 @@ void OSCNode::update_mj_data(const State& current_state) {
     }
 
     // Kinematic ground-referenced height
-    double raw_base_z = -lowest_contact_z;
+    double raw_base_z = -lowest_contact_z + 0.0635;
 
     // Low-pass / Complementary filter on Z to prevent discontinuous jumps on contact changes
     static double filtered_base_z = 0.20;
